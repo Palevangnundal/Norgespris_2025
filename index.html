@@ -363,9 +363,9 @@ function renderBar(labels,kwh,cS,cN){
     {type:'bar',label:'Kr Norgespris',data:cN,yAxisID:'yC',backgroundColor:'rgba(22,163,74,.35)',borderColor:'#16a34a',borderWidth:1}
   ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},interaction:{mode:'index',intersect:false},
   scales:{yK:{position:'left',title:{display:true,text:'kWh'},beginAtZero:true,suggestedMax:ymaxK,grid:{drawOnChartArea:false}},
-          yC:{position:'right',title:{display:true,text:'Kr (inkl. mva'},beginAtZero:true,suggestedMax:ymaxC}}});
+          yC:{position:'right',title:{display:true,text:'Kr (inkl. mva)'},beginAtZero:true,suggestedMax:ymaxC}}});
 }
-function renderPrice(labels,pS,pN){          yC:{position:'right',title:{display:true,text:'Kr (inkl. mva)'},beginAtZero:true,suggestedMax:ymaxC}}});
+function renderPrice(labels,pS,pN){
   const ctx=document.getElementById('priceChart').getContext('2d'); if(priceChart) priceChart.destroy();
   const ymax=Math.max(q(pS,0.95),q(pN,0.95))*1.15;
   priceChart=new Chart(ctx,{type:'line',data:{labels,datasets:[
