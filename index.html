@@ -244,3 +244,350 @@
     const sep = seps.reduce((best, s) => {
       const count = (firstLine.match(new RegExp(`\\${s}`,'g'))||[]).length;
       return count > best.count ? { s, count } : best;
+    }, { s: ',', count: 0 }).s;
+
+    // 3) Header -> indeks
+    const [head, ...lines] = txt.split('\n').filter(l => l.trim().length);
+    const headers = head.split(sep).map(h => h.replace(/^\uFEFF/,'').trim().toLowerCase());
+    const idx = Object.fromEntries(headers.map((h,i)=>[h,i]));
+
+    // 4) Sjekk påkrevde kolonner
+    const need = ['area','year','month','avg_effective_nok_ex'];
+    const missing = need.filter(k => !(k in idx));
+    if (missing.length) throw new Error('Mangler kolonner i CSV: ' + missing.join(', '));
+
+    const hasSpot = 'avg_spot_nok_ex' in idx;
+
+    // 5) Detekter desimal-komma
+    const sampleCols = (lines[0] || '').split(sep).map(s=>s.trim());
+    const probe = [idx['avg_effective_nok_ex'], hasSpot ? idx['avg_spot_nok_ex'] : -1]
+                    .map(i => i>=0 ? sampleCols[i] || '' : '');
+    const usesCommaDecimal = probe.some(v => /,\d{1,3}$/.test(v) || (v.includes(',') && !v.includes('.')));
+
+    const toNum = (s) => {
+      if (s == null) return NaN;
+      let t = String(s).trim();
+      // fjern vanlige tusenskiller inkl. non-breaking space
+      t = t.replace(/\u00A0/g,'').replace(/\s/g,'');
+      if (usesCommaDecimal) {
+        t = t.replace(/\./g,'').replace(',', '.');
+      }
+      return Number(t);
+    };
+
+    // 6) Parse rader
+    const rows = [];
+    for (const line of lines) {
+      const cols = line.split(sep);
+      if (cols.length < headers.length) continue;
+      const area = (cols[idx.area] || '').trim().toUpperCase();
+      const year = toNum(cols[idx.year]);
+      const month = toNum(cols[idx.month]);
+      const eff_ex = toNum(cols[idx['avg_effective_nok_ex']]);
+      const spot_ex = hasSpot ? toNum(cols[idx['avg_spot_nok_ex']]) : NaN;
+      if (!area || !Number.isFinite(year) || !Number.isFinite(month)) continue;
+      rows.push({ area, year, month, eff_ex, spot_ex });
+    }
+
+    // 7) Strukturér
+    const byAreaYear = {};
+    const areas = new Set();
+    const years = new Set();
+    for (const r of rows) {
+      areas.add(r.area);
+      years.add(r.year);
+      byAreaYear[r.area] ??= {};
+      byAreaYear[r.area][r.year] ??= {};
+      byAreaYear[r.area][r.year][r.month] = r;
+    }
+
+    return {
+      byAreaYear,
+      years: [...years].sort((a,b)=>a-b),
+      areas: [...areas].sort()
+    };
+  }
+
+  // ---- Periodevalg -> liste av måneder ----
+  function monthsInPeriod(byAreaYear, area, period){ // returns [{y,m,row}]
+    const ent = byAreaYear[area]||{};
+    const years = Object.keys(ent).map(Number).sort((a,b)=>a-b);
+    const list = [];
+    for(const y of years){
+      for(let m=1;m<=12;m++){
+        const row = ent[y]?.[m];
+        if(row) list.push({y, m, row});
+      }
+    }
+    if(period === 'last12'){
+      return list.slice(-12);
+    } else {
+      const y = Number(period);
+      return (new Array(12)).fill(0).map((_,i)=>{
+        const m = i+1; const row = ent[y]?.[m]; return row ? {y, m, row} : null;
+      }).filter(Boolean);
+    }
+  }
+
+  // ---- Beregning ----
+  function compute(area, period, byAreaYear, monthlyKWh){
+    const fixedEx = NORGESPRIS_EX_ORE/100;
+    const ms = monthsInPeriod(byAreaYear, area, period);
+    const labels = [], kwhArr = [], priceS = [], priceN = [], costS = [], costN = [], table = [];
+    for(const {y,m,row} of ms){
+      const kwh = monthlyKWh[m-1] || 0;
+      const priceEffIncl = row.eff_ex * (1+VAT);
+      const covered = Math.min(kwh, CAP_KWH), excess = Math.max(0, kwh - CAP_KWH);
+      const spotExEx = Number.isFinite(row.spot_ex) ? row.spot_ex : row.eff_ex;
+      const priceNorgIncl = (kwh>0) ? ((covered*fixedEx + excess*spotExEx)*(1+VAT) / kwh) : fixedIncl();
+
+      const cS = kwh * priceEffIncl;
+      const cN = kwh * priceNorgIncl;
+
+      labels.push(`${y}-${String(m).padStart(2,'0')}`);
+      kwhArr.push(kwh); priceS.push(priceEffIncl); priceN.push(priceNorgIncl);
+      costS.push(cS); costN.push(cN);
+
+      table.push({
+        month: `${MONTHS[m-1]} ${y}`,
+        kwh: kwh,
+        pS: priceEffIncl,
+        pN: priceNorgIncl,
+        cS, cN
+      });
+    }
+    const sums = {
+      kwh: kwhArr.reduce((a,b)=>a+b,0),
+      cS: costS.reduce((a,b)=>a+b,0),
+      cN: costN.reduce((a,b)=>a+b,0)
+    };
+    return { labels, kwhArr, priceS, priceN, costS, costN, table, sums };
+  }
+
+  // ---- UI refs ----
+  const areaEl = document.getElementById('area');
+  const annualEl = document.getElementById('annual');
+  const shapeEl = document.getElementById('shape'); const shapeOut = document.getElementById('shapeOut');
+  const evEl = document.getElementById('ev'); const evKmEl = document.getElementById('evkm');
+  const periodChips = document.getElementById('periodChips');
+
+  const sumNEl = document.getElementById('sumN');
+  const sumSEl = document.getElementById('sumS');
+  const statusEl = document.getElementById('status');
+
+  const customToggle = document.getElementById('customToggle');
+  const customInputs = document.getElementById('customInputs');
+  const customButtons = document.getElementById('customButtons');
+  const btnFillProfile = document.getElementById('fillProfile');
+  const btnClearAll = document.getElementById('clearAll');
+
+  const tblBody = document.querySelector('#tbl tbody');
+  const sumKwhEl = document.getElementById('sumKwh');
+  const sumCostSEl = document.getElementById('sumCostS');
+  const sumCostNEl = document.getElementById('sumCostN');
+
+  let dataset, barChart, priceChart, period = 'last12';
+
+  function setAreas(areas){
+    areaEl.innerHTML = "";
+    for(const a of areas){
+      const opt = document.createElement('option');
+      opt.value = a; opt.textContent = AREA_INFO[a] || a;
+      areaEl.appendChild(opt);
+    }
+    areaEl.value = areas.includes('NO1') ? 'NO1' : (areas[0] || '');
+  }
+
+  function setPeriodChips(years){
+    periodChips.innerHTML = "";
+    const mk = (val, label) => {
+      const b = document.createElement('button');
+      b.className = 'chip'; b.textContent = label; b.dataset.val = val;
+      b.onclick = () => { period = val; updateActiveChips(); recalc(); };
+      periodChips.appendChild(b);
+    };
+    mk('last12', 'Siste 12 mnd');
+    years.slice().reverse().forEach(y => mk(String(y), String(y)));
+    updateActiveChips();
+  }
+  function updateActiveChips(){
+    [...periodChips.querySelectorAll('.chip')].forEach(x=>{
+      x.classList.toggle('active', x.dataset.val===String(period));
+    });
+  }
+
+  function renderCustomInputs(enable, monthlyKWh){
+    customInputs.style.display = enable ? 'grid' : 'none';
+    customButtons.style.display = enable ? 'flex' : 'none';
+    if(!enable) return;
+    // bygg inputs kun én gang pr aktivering
+    if (customInputs.childElementCount === 0) {
+      for(let i=0;i<12;i++){
+        const wrap = document.createElement('div');
+        const lab = document.createElement('label'); lab.textContent = MONTHS[i];
+        const inp = document.createElement('input');
+        inp.type = 'number'; inp.min = '0'; inp.step = '1'; inp.value = '';
+        inp.id = `m_${i}`;
+        wrap.appendChild(lab); wrap.appendChild(inp);
+        customInputs.appendChild(wrap);
+      }
+      btnFillProfile.onclick = () => {
+        for(let i=0;i<12;i++){
+          document.getElementById(`m_${i}`).value = Math.round(monthlyKWh[i]);
+        }
+        recalc();
+      };
+      btnClearAll.onclick = () => {
+        for(let i=0;i<12;i++) document.getElementById(`m_${i}`).value = '';
+        recalc();
+      };
+    }
+  }
+  function readCustomKwh(defaultMonthly){
+    const arr = [];
+    for(let i=0;i<12;i++){
+      const v = document.getElementById(`m_${i}`)?.value;
+      arr.push(v==='' || v==null ? defaultMonthly[i] : Number(v));
+    }
+    return arr;
+  }
+
+  function renderTable(rows, sums){
+    tblBody.innerHTML = "";
+    for(const r of rows){
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${r.month}</td>
+        <td>${Math.round(r.kwh).toLocaleString('nb-NO')}</td>
+        <td>${r.pS.toFixed(2)}</td>
+        <td>${r.pN.toFixed(2)}</td>
+        <td>${kroner(r.cS)}</td>
+        <td>${kroner(r.cN)}</td>`;
+      tblBody.appendChild(tr);
+    }
+    sumKwhEl.textContent = Math.round(sums.kwh).toLocaleString('nb-NO');
+    sumCostSEl.textContent = kroner(sums.cS);
+    sumCostNEl.textContent = kroner(sums.cN);
+    sumSEl.textContent = kroner(sums.cS);
+    sumNEl.textContent = kroner(sums.cN);
+  }
+
+  function renderBar(labels, kwh, costS, costN){
+    const ctx = document.getElementById('barChart').getContext('2d');
+    if(barChart) barChart.destroy();
+    const ymaxCost = Math.max(q(costS,0.95), q(costN,0.95)) * 1.15;
+    const ymaxKwh = q(kwh,0.95) * 1.25;
+    barChart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [
+          { type:'bar', label:'kWh', data:kwh, yAxisID:'yKwh', backgroundColor:'rgba(31, 41, 55, .25)', borderColor:'#1f2937', borderWidth:1 },
+          { type:'bar', label:'Kr spot', data:costS, yAxisID:'yKr', backgroundColor:'rgba(37, 99, 235, .35)', borderColor:'#2563eb', borderWidth:1 },
+          { type:'bar', label:'Kr Norgespris', data:costN, yAxisID:'yKr', backgroundColor:'rgba(22, 163, 74, .35)', borderColor:'#16a34a', borderWidth:1 },
+        ]
+      },
+      options: {
+        responsive:true, maintainAspectRatio:false,
+        interaction:{ mode:'index', intersect:false },
+        plugins:{ legend:{ display:false } },
+        scales:{
+          yKwh:{ position:'left', title:{display:true, text:'kWh'}, suggestedMax:ymaxKwh, beginAtZero:true, grid:{ drawOnChartArea:false }},
+          yKr:{ position:'right', title:{display:true, text:'Kr (inkl. mva)'}, suggestedMax:ymaxCost, beginAtZero:true }
+        }
+      }
+    });
+  }
+
+  function renderPriceChart(labels, priceS, priceN){
+    const ctx = document.getElementById('priceChart').getContext('2d');
+    if(priceChart) priceChart.destroy();
+    const ymax = Math.max(q(priceS,0.95), q(priceN,0.95)) * 1.15;
+    priceChart = new Chart(ctx, {
+      type:'line',
+      data:{ labels, datasets:[
+        { label:'Spot m/strømstøtte (inkl. mva)', data:priceS, borderColor:'#2563eb', backgroundColor:'rgba(37,99,235,.15)', tension:.15, pointRadius:0, borderWidth:2 },
+        { label:'Norgespris (effektiv, inkl. mva)', data:priceN, borderColor:'#16a34a', backgroundColor:'rgba(22,163,74,.15)', tension:.15, pointRadius:0, borderWidth:2 }
+      ]},
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{ display:false } },
+        scales:{ y:{ title:{display:true,text:'kr/kWh (inkl. mva)'}, suggestedMax:ymax, beginAtZero:true } }
+      }
+    });
+  }
+
+  // ---- Recalc (debounced) ----
+  const deb = (fn, ms=300) => { let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; };
+
+  function recalc(){
+    if(!dataset) return;
+    const area = areaEl.value;
+    const annual = Number(annualEl.value||0);
+    const shape = Number(shapeEl.value||0)/100; shapeOut.textContent = `${shapeEl.value}%`;
+    const evOn = evEl.checked; const evKm = Number(evKmEl.value||0);
+    evKmEl.disabled = !evOn;
+
+    const defaultMonthly = annualToMonthly(annual, shape, evOn, evKm);
+
+    if(customToggle.checked){
+      renderCustomInputs(true, defaultMonthly);
+    } else {
+      // skjul inputs (behold verdier hvis man aktiverer igjen)
+      customInputs.style.display='none'; customButtons.style.display='none';
+    }
+    const monthlyKWh = customToggle.checked ? readCustomKwh(defaultMonthly) : defaultMonthly;
+
+    const { labels, kwhArr, priceS, priceN, costS, costN, table, sums } =
+      compute(area, period, dataset.byAreaYear, monthlyKWh);
+
+    renderBar(labels, kwhArr, costS, costN);
+    renderTable(table, sums);
+
+    // Status
+    statusEl.textContent = `Viser ${labels.length} måneder for ${AREA_INFO[area]||area}.`;
+
+    // Hele serie for prisgraf (bruk samme kWh per kalendermåned)
+    const allList = (()=>{ const ent = dataset.byAreaYear[area]||{}; const ys = Object.keys(ent).map(Number).sort((a,b)=>a-b);
+      const out=[]; for(const y of ys){ for(let m=1;m<=12;m++){ const r=ent[y]?.[m]; if(r) out.push({y,m,row:r}); } } return out; })();
+    const pLabels = allList.map(o=>`${o.y}-${String(o.m).padStart(2,'0')}`);
+    const pS = allList.map(o=>o.row.eff_ex*(1+VAT));
+    const pN = allList.map(o=>{
+      const k = monthlyKWh[o.m-1]||0;
+      const covered = Math.min(k, CAP_KWH), excess = Math.max(0, k - CAP_KWH);
+      const spotExEx = Number.isFinite(o.row.spot_ex) ? o.row.spot_ex : o.row.eff_ex;
+      return (k>0) ? ((covered*(NORGESPRIS_EX_ORE/100)+excess*spotExEx)*(1+VAT)/k) : fixedIncl();
+    });
+    renderPriceChart(pLabels, pS, pN);
+  }
+
+  // ---- Init ----
+  (async function(){
+    try{
+      dataset = await loadMonthlyAvgs();
+      setAreas(dataset.areas);
+      setPeriodChips(dataset.years);
+      recalc();
+    }catch(e){
+      console.error(e);
+      statusEl.textContent = 'Feil ved lasting av data. Sjekk at data/monthly_avgs_v1.csv er tilgjengelig.';
+    }
+  })();
+
+  // ---- Lyttere ----
+  areaEl.addEventListener('change', recalc);
+  shapeEl.addEventListener('input', deb(recalc, 120));
+  annualEl.addEventListener('input', deb(recalc, 300));
+  evEl.addEventListener('change', recalc);
+  evKmEl.addEventListener('input', deb(recalc, 200));
+  customToggle.addEventListener('change', ()=>{
+    const annual = Number(annualEl.value||0);
+    const shape = Number(shapeEl.value||0)/100;
+    const evOn = evEl.checked;
+    const evKm = Number(evKmEl.value||0);
+    renderCustomInputs(customToggle.checked, annualToMonthly(annual, shape, evOn, evKm));
+    recalc();
+  });
+</script>
+</body>
+</html>
