@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="nb">
+<meta charset="utf-8">
+<title>Debug – norgespris CSV</title>
+<style>body{font:14px system-ui;margin:20px} .ok{color:green}.err{color:#b91c1c}.muted{color:#6b7280} pre{background:#f6f8fa;padding:8px;border-radius:8px}</style>
+<h1>Debug: last CSV og vis områder</h1>
+<div id="status" class="muted">Laster…</div>
+<div id="result"></div>
+<pre id="sample"></pre>
+<script>
+addEventListener('error', e => { const s=document.getElementById('status'); s.className='err'; s.textContent='JS-feil: '+e.message; });
+addEventListener('unhandledrejection', e => { const s=document.getElementById('status'); s.className='err'; s.textContent='Promise-feil: '+(e.reason?.message||e.reason); });
+async function loadCSV(){
+  const r = await fetch('data/monthly_avgs_v1.csv?v='+Date.now(), {cache:'no-store'});
+  if(!r.ok) throw new Error('CSV ikke funnet ('+r.status+')');
+  const txt=await r.text(); const lines=txt.trim().split(/\r?\n/); if(!lines.length) throw new Error('CSV er tom');
+  const header=lines[0].replace(/^\uFEFF/,''); const sep=(header.split(';').length>header.split(',').length)?';':',';
+  const h=header.split(sep).map(s=>s.trim().toLowerCase()); const idx=Object.fromEntries(h.map((v,i)=>[v,i]));
+  const rows=[]; for(let i=1;i<lines.length;i++){const L=lines[i].trim(); if(!L) continue; const c=L.split(sep);
+    const area=(c[idx.area]||'').toUpperCase().trim(); const year=+(c[idx.year]||''); const month=+(c[idx.month]||'');
+    if(area && year && month) rows.push({area,year,month}); }
+  return { rows, areas:[...new Set(rows.map(r=>r.area))].sort(), years:[...new Set(rows.map(r=>r.year))].sort() };
+}
+(async ()=>{const s=document.getElementById('status'); try{
+  const {rows,areas,years}=await loadCSV(); s.className='ok';
+  s.textContent=`OK: ${rows.length} rader. Områder: ${areas.join(', ')}. År: ${years[0]}–${years[years.length-1]}`;
+  document.getElementById('result').textContent='Første 10 rader:';
+  document.getElementById('sample').textContent=JSON.stringify(rows.slice(0,10),null,2);
+}catch(e){s.className='err'; s.textContent='Feil: '+(e.message||e);}})();
+</script>
