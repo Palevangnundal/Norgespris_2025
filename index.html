@@ -1,0 +1,713 @@
+<!doctype html>
+<html lang="nb">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Norgespris</title>
+  <meta name="description" content="Sammenlign Norgespris og spotpris med strømstøtte. Legg inn årlig forbruk eller egne månedstall og se kostnad.">
+  <style>
+    :root{ --bg:#f7f7f8; --fg:#111; --muted:#6b7280; --card:#fff; --border:#e5e7eb; }
+    *{ box-sizing:border-box }
+    html,body{ margin:0; background:var(--bg); color:var(--fg); font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial }
+    .wrap{ max-width:1200px; margin:0 auto; padding:16px }
+    h1{ font-size:22px; margin:0 0 6px }
+    p{ margin:0 0 12px; color:var(--muted) }
+    .card{ background:var(--card); border:1px solid var(--border); border-radius:14px; padding:14px; }
+    .grid{ display:grid; gap:12px }
+    .g3{ grid-template-columns:repeat(3,minmax(0,1fr)) }
+    @media (max-width:1000px){ .g3{ grid-template-columns:1fr } }
+    label{ display:block; font-size:13px; color:var(--muted); margin-bottom:6px }
+    input[type="number"], select, button{ font:inherit }
+    input[type="number"], select{ width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:12px; background:#fff }
+    input[type="range"]{ width:100% }
+    button{ padding:8px 12px; border-radius:10px; border:1px solid var(--border); background:#fff; cursor:pointer }
+    .row{ display:flex; align-items:center; gap:8px; flex-wrap:wrap }
+    .pill{ display:inline-block; padding:6px 10px; border-radius:999px; border:1px solid var(--border); background:#fff; font-size:13px }
+    .muted{ color:var(--muted) }
+    .big{ font-size:20px; font-weight:700 }
+    .kv{ font-variant-numeric: tabular-nums }
+    .chips{ display:flex; gap:8px; flex-wrap:wrap }
+    .chip{ padding:6px 10px; border-radius:999px; border:1px solid var(--border); background:#fff; cursor:pointer }
+    .chip.active{ background:#111; color:#fff; border-color:#111 }
+    .note{ background:#fffaf0; border:1px solid #fde68a; color:#92400e; padding:10px 12px; border-radius:12px }
+    .disabled{ opacity:.5; pointer-events:none }
+    .pos{ color:#16a34a } .neg{ color:#dc2626 }
+    table{ width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums }
+    th,td{ padding:8px 10px; border-bottom:1px solid var(--border); text-align:right }
+    th:first-child, td:first-child{ text-align:left }
+    tfoot td{ font-weight:700 }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <h1>Norgespris – beregning og graf</h1>
+  <p>Legg inn årlig forbruk eller egne månedstall. Vi bruker <b>månedssnitt</b> fra <code>data/monthly_avgs_v1.csv</code> for valgt prisområde og sammenligner <b>Norgespris</b> med <b>spotpris med strømstøtte</b>. Alle beløp vises <b>inkl. mva</b>.</p>
+
+  <!-- Inndata -->
+  <div class="card grid g3" style="margin-top:8px">
+    <div>
+      <label for="area">Prisområde</label>
+      <select id="area"></select>
+      <small class="muted">NO1 er standard hvis tilgjengelig.</small>
+    </div>
+
+    <div id="annualBox">
+      <label for="annual">Årlig forbruk (kWh)</label>
+      <input id="annual" type="number" value="20000" min="0" step="100">
+      <small class="muted">Bruk helår. Fordeles på måneder etter profil (eller summen av manuelle måneder).</small>
+    </div>
+
+    <div id="useBox">
+      <label>Boligtype</label>
+      <div id="useChips" class="chips"></div>
+      <small class="muted"><b>Bolig</b>: tak 5000 kWh/mnd. <b>Fritidsbolig</b>: tak 1000 kWh/mnd.</small>
+    </div>
+
+    <div id="insulBox">
+      <label>Isoleringsgrad</label>
+      <div id="insulChips" class="chips"></div>
+      <label for="shape" style="margin-top:6px">Vinter/sommer-justering</label>
+      <input id="shape" type="range" min="-50" max="50" value="0">
+      <div class="row">
+        <span class="muted">Vintertung</span>
+        <span id="shapeOut" class="pill">0%</span>
+        <span class="muted">Flatere</span>
+      </div>
+      <small class="muted">–50% = flatere, +50% = mer vinter/sommer-tyngde.</small>
+    </div>
+
+    <div>
+      <label>Velg periode energipriser i beregning</label>
+      <div id="periodChips" class="chips"></div>
+      <small class="muted">“Siste 12 mnd” eller et bestemt år.</small>
+    </div>
+
+    <div>
+      <label>Manuell månedsutfylling</label>
+      <div class="row">
+        <button id="manualToggle" class="chip active">Fyll inn forbruk per måned selv</button>
+        <button id="manualShowHide">Skjul felter</button>
+      </div>
+      <small class="muted">Når aktivt: Årlig forbruk blir sum av månedsfeltene (read-only). Uutfylte måneder = 0.</small>
+    </div>
+  </div>
+
+  <!-- Manuelle månedsfelter (over grafen) -->
+  <div id="manualCard" class="card" style="margin-top:12px; display:none">
+    <div class="row" style="justify-content:space-between">
+      <div class="muted">Fyll inn kWh per måned (oppdateres umiddelbart)</div>
+      <div class="row">
+        <button id="fillProfile">Fyll med estimert profil</button>
+        <button id="clearAll">Tøm alle</button>
+      </div>
+    </div>
+    <div class="hr" style="height:1px;background:var(--border);margin:8px 0"></div>
+    <div id="customInputs" class="grid g3" style="margin-bottom:8px"></div>
+    <div class="muted">Sum manuelle måneder: <b><span id="manualSum">0</span> kWh</b> (vises som årlig forbruk i denne modusen)</div>
+  </div>
+
+  <div class="note" style="margin-top:10px">
+    <b>Viktig:</b> Nettleie, avgifter og påslag er <b>ikke</b> inkludert – de påvirkes i praksis ikke av valg av Norgespris.
+  </div>
+
+  <!-- Oppsummering -->
+  <div class="card grid g3" style="margin-top:12px">
+    <div>
+      <div class="big kv"><b>Estimert strømkostnad</b></div>
+      <div class="muted">inkludert mva.</div>
+      <div class="muted" style="margin-top:4px">Ekskludert nettleie, avgifter og påslag. Disse påvirkes ikke av Norgespris.</div>
+    </div>
+    <div>
+      <div class="muted">Norgespris</div>
+      <div class="big kv" id="sumN">–</div>
+    </div>
+    <div>
+      <div class="muted">Spot m/strømstøtte</div>
+      <div class="big kv" id="sumS">–</div>
+      <div class="muted" style="margin-top:6px"><b>Besparelse Norgespris:</b> <b id="saveOut">–</b></div>
+      <div class="muted" id="besparelseText" style="margin-top:6px"></div>
+    </div>
+  </div>
+
+  <!-- Hovedgraf: kWh = linje, kostnader = stolper -->
+  <div class="card" style="margin-top:12px">
+    <div class="row" style="justify-content:space-between">
+      <div class="muted">Forbruk (linje) og kostnader (stolper) for valgt periode</div>
+      <div id="status" class="muted">Laster data …</div>
+    </div>
+    <div class="hr" style="height:1px;background:var(--border);margin:8px 0"></div>
+    <div style="height:360px"><canvas id="barChart"></canvas></div>
+  </div>
+
+  <!-- Tabell -->
+  <div class="card" style="margin-top:12px">
+    <div style="overflow:auto">
+      <table id="tbl">
+        <thead>
+          <tr>
+            <th>Måned</th>
+            <th>kWh</th>
+            <th id="thPNo">NO? - spotpris (kr/kWh)</th>
+            <th id="thPS">NO? - spotpris med strømstøtte (kr/kWh)</th>
+            <th>Norgespris - effektiv (kr/kWh)</th>
+            <th>Kostnad - spotpris med strømstøtte (kr)</th>
+            <th>Kostnad - Norgespris (kr)</th>
+            <th>Besparelse med Norgespris (kr)</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+        <tfoot>
+          <tr>
+            <td>SUM</td>
+            <td id="sumKwh">–</td>
+            <td></td><td></td><td></td>
+            <td id="sumCostS">–</td>
+            <td id="sumCostN">–</td>
+            <td id="sumDelta">–</td>
+          </tr>
+        </tfoot>
+      </table>
+      <small class="muted">* “Norgespris - effektiv (kr/kWh)” er gjennomsnittsprisen når evt. forbruk over forbrukstaket prises med spot uten strømstøtte.</small>
+    </div>
+  </div>
+
+  <!-- Historiske priser -->
+  <div class="card" style="margin-top:12px">
+    <div class="row" style="justify-content:space-between">
+      <div id="histTitle" class="muted">Historiske energipriser</div>
+    </div>
+    <div class="hr" style="height:1px;background:var(--border);margin:8px 0"></div>
+    <div style="height:300px"><canvas id="priceChart"></canvas></div>
+  </div>
+</div>
+
+<script>
+  // ---- Konstanter & hjelpere ----
+  const VAT = 0.25;
+  const NORGESPRIS_EX_ORE = 40;                 // eks. mva (øre/kWh)
+  const CAP_BOLIG = 5000;                       // kWh/mnd (fastpris-tak)
+  const CAP_FRITID = 1000;                      // kWh/mnd (fastpris-tak)
+  const MONTHS = ["Jan","Feb","Mar","Apr","Mai","Jun","Jul","Aug","Sep","Okt","Nov","Des"];
+  const AREA_INFO = { NO1:"NO1", NO2:"NO2", NO3:"NO3", NO4:"NO4", NO5:"NO5", NO6:"NO6" };
+
+  // Basisprofiler (sum ≈ 100). Normaliseres.
+  const BASE_WINTER = [13.5,12,10,8.5,7,5.5,4.5,5,7,8.5,10,12];      // mest i Jan, deretter Des/Feb
+  const BASE_SUMMER = [6,6.5,7.5,8.5,9.5,10.5,11,10.5,9.5,8,6.5,5.5]; // mest i Jun–Aug
+
+  const normalizeProfile = p => { const s = p.reduce((a,b)=>a+b,0)||1; return p.map(x => x * 100 / s); };
+
+  // shape ∈ [-0.5, +0.5]: -0.5 → flatere, +0.5 → forsterker (mer vinter/sommer)
+  function shapedProfile(shape, useMode){
+    const base = normalizeProfile(useMode === 'fritid' ? BASE_SUMMER : BASE_WINTER);
+    const uniform = 100/12;
+    return base.map(p => uniform + (p - uniform) * (1 + shape));
+  }
+
+  function annualToMonthly(annual, shape, useMode){
+    const prof = shapedProfile(shape, useMode);
+    const baseAnnual = Math.max(0, Number(annual)||0);
+    return prof.map(pct => baseAnnual * (pct/100));
+  }
+
+  const kroner = n => (n||0).toLocaleString("nb-NO",{ style:"currency", currency:"NOK", maximumFractionDigits:0 });
+  const fixedIncl = () => (NORGESPRIS_EX_ORE/100) * (1+VAT);
+  const q = (arr,p=0.95) => { const a = arr.filter(Number.isFinite).slice().sort((x,y)=>x-y); if(!a.length) return 1; const i = Math.floor((a.length-1)*p); return a[i]; };
+
+  // ---- Robust CSV: BOM + separator + desimal-komma ----
+  async function loadMonthlyAvgs(){
+    const res = await fetch('data/monthly_avgs_v1.csv', { cache: 'no-store' });
+    if(!res.ok) throw new Error('Kunne ikke hente data/monthly_avgs_v1.csv');
+
+    let txt = await res.text();
+    txt = txt.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').trim();
+    if (!txt) throw new Error('CSV er tom');
+
+    const firstLine = txt.split('\n', 1)[0];
+    const seps = [',',';','\t','|'];
+    const sep = seps.reduce((best, s) => {
+      const count = (firstLine.match(new RegExp(`\\${s}`,'g'))||[]).length;
+      return count > best.count ? { s, count } : best;
+    }, { s: ',', count: 0 }).s;
+
+    const [head, ...lines] = txt.split('\n').filter(l => l.trim().length);
+    const headers = head.split(sep).map(h => h.replace(/^\uFEFF/,'').trim().toLowerCase());
+    const idx = Object.fromEntries(headers.map((h,i)=>[h,i]));
+
+    const required = ['area','year','month','avg_effective_nok_ex'];
+    const missing = required.filter(k => !(k in idx));
+    if (missing.length) throw new Error('Mangler kolonner i CSV: ' + missing.join(', '));
+
+    const hasSpot = 'avg_spot_nok_ex' in idx;
+
+    // Detekter desimal-komma
+    const sampleCols = (lines[0] || '').split(sep).map(s=>s.trim());
+    const probe = [idx['avg_effective_nok_ex'], hasSpot ? idx['avg_spot_nok_ex'] : -1]
+                    .map(i => i>=0 ? sampleCols[i] || '' : '');
+    const usesCommaDecimal = probe.some(v => /,\d{1,3}$/.test(v) || (v.includes(',') && !v.includes('.')));
+
+    const toNum = (s) => {
+      if (s == null) return NaN;
+      let t = String(s).trim();
+      t = t.replace(/\u00A0/g,'').replace(/\s/g,'');
+      if (usesCommaDecimal) t = t.replace(/\./g,'').replace(',', '.');
+      return Number(t);
+    };
+
+    const rows = [];
+    for (const line of lines) {
+      const cols = line.split(sep);
+      if (cols.length < headers.length) continue;
+      const area = (cols[idx.area] || '').trim().toUpperCase();
+      const year = toNum(cols[idx.year]);
+      const month = toNum(cols[idx.month]);
+      const eff_ex = toNum(cols[idx['avg_effective_nok_ex']]); // NOK/kWh eks mva (m/støtte)
+      const spot_ex = hasSpot ? toNum(cols[idx['avg_spot_nok_ex']]) : NaN; // NOK/kWh eks mva (u/støtte)
+      if (!area || !Number.isFinite(year) || !Number.isFinite(month)) continue;
+      rows.push({ area, year, month, eff_ex, spot_ex });
+    }
+
+    const byAreaYear = {};
+    const areas = new Set();
+    const years = new Set();
+    for (const r of rows) {
+      areas.add(r.area);
+      years.add(r.year);
+      byAreaYear[r.area] ??= {};
+      byAreaYear[r.area][r.year] ??= {};
+      byAreaYear[r.area][r.year][r.month] = r;
+    }
+
+    return {
+      byAreaYear,
+      years: [...years].sort((a,b)=>a-b),
+      areas: [...areas].sort()
+    };
+  }
+
+  // ---- Periodevalg -> liste av måneder ----
+  function monthsInPeriod(byAreaYear, area, period){ // returns [{y,m,row}]
+    const ent = byAreaYear[area]||{};
+    const years = Object.keys(ent).map(Number).sort((a,b)=>a-b);
+    const list = [];
+    for(const y of years){
+      for(let m=1;m<=12;m++){
+        const row = ent[y]?.[m];
+        if(row) list.push({y, m, row});
+      }
+    }
+    if(period === 'last12'){
+      return list.slice(-12);
+    } else {
+      const y = Number(period);
+      return (new Array(12)).fill(0).map((_,i)=>{
+        const m = i+1; const row = ent[y]?.[m]; return row ? {y, m, row} : null;
+      }).filter(Boolean);
+    }
+  }
+
+  // ---- Beregning ----
+  function compute(area, period, byAreaYear, monthlyKWh, useMode){
+    const fixedEx = NORGESPRIS_EX_ORE/100;              // eks mva
+    const cap = useMode === 'fritid' ? CAP_FRITID : CAP_BOLIG;
+    const ms = monthsInPeriod(byAreaYear, area, period);
+    const labels = [], kwhArr = [], priceS = [], priceNo = [], priceN = [],
+          costS = [], costN = [], table = [];
+
+    for(const {y,m,row} of ms){
+      const kwh = monthlyKWh[m-1] || 0;
+
+      // Spot m/støtte (eff_ex) og u/støtte (spot_ex) -> inkl. mva
+      const priceEffIncl = row.eff_ex * (1+VAT);
+      const priceNoIncl  = (Number.isFinite(row.spot_ex) ? row.spot_ex : row.eff_ex) * (1+VAT);
+
+      // Norgespris: inntil cap til fastpris, overskytende til spot u/støtte (begge eks mva i mix → inkl i total)
+      const covered = Math.min(kwh, cap);
+      const excess  = Math.max(0, kwh - cap);
+      const spotExEx = Number.isFinite(row.spot_ex) ? row.spot_ex : row.eff_ex; // eks mva
+      const priceNorgIncl = (kwh>0)
+        ? ((covered*fixedEx + excess*spotExEx)*(1+VAT) / kwh)
+        : fixedIncl();
+
+      const cS = kwh * priceEffIncl;
+      const cN = kwh * priceNorgIncl;
+
+      labels.push(`${y}-${String(m).padStart(2,'0')}`);
+      kwhArr.push(kwh);
+      priceS.push(priceEffIncl);
+      priceNo.push(priceNoIncl);
+      priceN.push(priceNorgIncl);
+      costS.push(cS);
+      costN.push(cN);
+
+      table.push({
+        month: `${MONTHS[m-1]} ${y}`,
+        kwh, pS: priceEffIncl, pNo: priceNoIncl, pN: priceNorgIncl, cS, cN, d: cS - cN // positiv = besparelse
+      });
+    }
+
+    const sums = {
+      kwh: kwhArr.reduce((a,b)=>a+b,0),
+      cS: costS.reduce((a,b)=>a+b,0),
+      cN: costN.reduce((a,b)=>a+b,0),
+      d:  costS.reduce((a,b)=>a+b,0) - costN.reduce((a,b)=>a+b,0)
+    };
+    return { labels, kwhArr, priceS, priceNo, priceN, costS, costN, table, sums };
+  }
+
+  // ---- UI refs ----
+  const areaEl = document.getElementById('area');
+  const annualEl = document.getElementById('annual');
+  const shapeEl = document.getElementById('shape'); const shapeOut = document.getElementById('shapeOut');
+  const insulChips = document.getElementById('insulChips');
+  const useChips = document.getElementById('useChips');
+  const periodChips = document.getElementById('periodChips');
+
+  const manualCard = document.getElementById('manualCard');
+  const manualToggle = document.getElementById('manualToggle');
+  const manualShowHide = document.getElementById('manualShowHide');
+  const manualInputsBox = document.getElementById('customInputs');
+  const manualSumEl = document.getElementById('manualSum');
+  const btnFillProfile = document.getElementById('fillProfile');
+  const btnClearAll = document.getElementById('clearAll');
+
+  const sumNEl = document.getElementById('sumN');
+  const sumSEl = document.getElementById('sumS');
+  const saveOutEl = document.getElementById('saveOut');
+  const besparelseTextEl = document.getElementById('besparelseText');
+  const statusEl = document.getElementById('status');
+  const histTitleEl = document.getElementById('histTitle');
+
+  const tblBody = document.querySelector('#tbl tbody');
+  const thPS = document.getElementById('thPS');
+  const thPNo = document.getElementById('thPNo');
+  const sumKwhEl = document.getElementById('sumKwh');
+  const sumCostSEl = document.getElementById('sumCostS');
+  const sumCostNEl = document.getElementById('sumCostN');
+  const sumDeltaEl = document.getElementById('sumDelta');
+
+  const annualBox = document.getElementById('annualBox');
+  const insulBox  = document.getElementById('insulBox');
+  const useBox    = document.getElementById('useBox');
+
+  let dataset, barChart, priceChart, period = 'last12', useMode = 'bolig'; // 'bolig' | 'fritid'
+  let manualMode = false;                 // manuell utfylling aktiv?
+  let manualVisible = true;               // vis/skjul felter i manuell
+  let manualValues = Array(12).fill(null); // null = ikke satt => 0 i kalkyle
+
+  function setAreas(areas){
+    areaEl.innerHTML = "";
+    for(const a of areas){
+      const opt = document.createElement('option');
+      opt.value = a; opt.textContent = AREA_INFO[a] || a;
+      areaEl.appendChild(opt);
+    }
+    areaEl.value = areas.includes('NO1') ? 'NO1' : (areas[0] || '');
+    updateAreaHeaders();
+    updateHistTitle();
+  }
+  function updateAreaHeaders(){
+    const a = areaEl.value || 'NO?';
+    thPS.textContent  = `${a} - spotpris med strømstøtte (kr/kWh)`;
+    thPNo.textContent = `${a} - spotpris (kr/kWh)`;
+  }
+  function updateHistTitle(){
+    const a = areaEl.value || 'NO?';
+    histTitleEl.textContent = `Historiske energipriser ${a}`;
+  }
+
+  function setPeriodChips(years){
+    periodChips.innerHTML = "";
+    const mk = (val, label) => {
+      const b = document.createElement('button');
+      b.className = 'chip'; b.textContent = label; b.dataset.val = val;
+      b.onclick = () => { period = val; updateActiveChips(); recalc(); };
+      periodChips.appendChild(b);
+    };
+    mk('last12', 'Siste 12 mnd');
+    years.slice().reverse().forEach(y => mk(String(y), String(y)));
+    updateActiveChips();
+  }
+  function updateActiveChips(){
+    [...periodChips.querySelectorAll('.chip')].forEach(x=>x.classList.toggle('active', x.dataset.val===String(period)));
+  }
+
+  function setInsulChips(){
+    insulChips.innerHTML = "";
+    const presets = [
+      { label:'Dårlig', val:+30 },
+      { label:'Normal', val: 0  },
+      { label:'God',    val:-25 },
+    ];
+    presets.forEach(p=>{
+      const b = document.createElement('button');
+      b.className = 'chip'; b.textContent = p.label; b.dataset.val = p.val;
+      b.onclick = () => { shapeEl.value = String(p.val); shapeOut.textContent = `${p.val}%`; highlightInsul(p.val); if(!manualMode) recalc(); };
+      insulChips.appendChild(b);
+    });
+    highlightInsul(0);
+  }
+  function highlightInsul(percent){
+    [...insulChips.querySelectorAll('.chip')].forEach(x=>x.classList.toggle('active', Number(x.dataset.val)===Number(percent)));
+  }
+
+  function setUseChips(){
+    useChips.innerHTML = "";
+    [
+      { val:'bolig',  label:'Bolig' },
+      { val:'fritid', label:'Fritidsbolig' }
+    ].forEach(p=>{
+      const b = document.createElement('button');
+      b.className = 'chip'; b.textContent = p.label; b.dataset.val = p.val;
+      b.onclick = () => { useMode = p.val; updateUseChips(); recalc(); };
+      useChips.appendChild(b);
+    });
+    updateUseChips();
+  }
+  function updateUseChips(){
+    [...useChips.querySelectorAll('.chip')].forEach(x=>x.classList.toggle('active', x.dataset.val===useMode));
+  }
+
+  // Manuelle inputs
+  function buildManualInputs(){
+    manualInputsBox.innerHTML = "";
+    for(let i=0;i<12;i++){
+      const wrap = document.createElement('div');
+      const lab = document.createElement('label'); lab.textContent = MONTHS[i];
+      const inp = document.createElement('input');
+      inp.type = 'number'; inp.min = '0'; inp.step = '1';
+      inp.value = manualValues[i]==null ? '' : String(manualValues[i]);
+      inp.id = `m_${i}`;
+      inp.addEventListener('input', () => {
+        const raw = inp.value.trim();
+        manualValues[i] = raw==='' ? null : Math.max(0, Number(raw));
+        updateManualSum();
+        recalc(); // live
+      });
+      wrap.appendChild(lab); wrap.appendChild(inp);
+      manualInputsBox.appendChild(wrap);
+    }
+  }
+  function updateManualInputsFromArray(arr){
+    for(let i=0;i<12;i++){
+      const el = document.getElementById(`m_${i}`);
+      if (el) el.value = arr[i]==null ? '' : String(arr[i]);
+    }
+  }
+  function updateManualSum(){
+    const s = manualValues.reduce((a,v)=>a+(v==null?0:v),0);
+    manualSumEl.textContent = Math.round(s).toLocaleString('nb-NO');
+    if (manualMode) {
+      annualEl.value = String(Math.round(s)); // Årlig forbruk = sum manuell
+    }
+  }
+
+  function setDisabledForManual(active){
+    // Lås ned isolering og slider; boligtype forblir aktiv
+    insulBox.classList.toggle('disabled', active);
+    shapeEl.disabled  = active;
+    [...insulChips.querySelectorAll('button')].forEach(b=>b.disabled = active);
+    useBox.classList.remove('disabled');
+    [...useChips.querySelectorAll('button')].forEach(b=>b.disabled = false);
+    // Årlig forbruk: ikke grå, men les-kun i manuell modus
+    annualEl.readOnly = active;
+  }
+
+  function renderTable(rows, sums){
+    tblBody.innerHTML = "";
+    for(const r of rows){
+      const cls = r.d>0 ? 'pos' : (r.d<0 ? 'neg' : '');
+      const sign = r.d<0 ? '-' : ''; // minus foran røde; ingen pluss foran grønne
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${r.month}</td>
+        <td>${Math.round(r.kwh).toLocaleString('nb-NO')}</td>
+        <td>${r.pNo.toFixed(2)}</td>
+        <td>${r.pS.toFixed(2)}</td>
+        <td>${r.pN.toFixed(2)}</td>
+        <td>${kroner(r.cS)}</td>
+        <td>${kroner(r.cN)}</td>
+        <td class="${cls}">${sign}${kroner(Math.abs(r.d))}</td>`;
+      tblBody.appendChild(tr);
+    }
+    sumKwhEl.textContent = Math.round(sums.kwh).toLocaleString('nb-NO');
+    sumCostSEl.textContent = kroner(sums.cS);
+    sumCostNEl.textContent = kroner(sums.cN);
+    sumDeltaEl.textContent  = (sums.d<0 ? '-' : '') + kroner(Math.abs(sums.d));
+    sumDeltaEl.className = sums.d>0 ? 'pos' : (sums.d<0 ? 'neg' : '');
+
+    sumSEl.textContent = kroner(sums.cS);
+    sumNEl.textContent = kroner(sums.cN);
+
+    saveOutEl.textContent = (sums.d<0 ? '-' : '') + kroner(Math.abs(sums.d));
+    saveOutEl.className = sums.d>0 ? 'pos' : (sums.d<0 ? 'neg' : '');
+    if (sums.d >= 0) {
+      besparelseTextEl.textContent = `Det er estimert at du sparer ${kroner(sums.d)} årlig med Norgespris basert på dine valgte forutsetninger.`;
+    } else {
+      besparelseTextEl.textContent = `Det er estimert at du taper ${kroner(-sums.d)} årlig med Norgespris basert på dine valgte forutsetninger.`;
+    }
+  }
+
+  // Kombinert graf: kWh (linje, venstre) + kostnader (stolper, høyre)
+  function renderMixedChart(labels, kwh, costS, costN){
+    const ctx = document.getElementById('barChart').getContext('2d');
+    if(barChart) barChart.destroy();
+    const ymaxKwh  = q(kwh,0.95)*1.25;
+    const ymaxCost = Math.max(q(costS,0.95), q(costN,0.95))*1.15;
+    barChart = new Chart(ctx, {
+      data: {
+        labels,
+        datasets: [
+          { type:'line', label:'Forbruk (kWh)', data:kwh, yAxisID:'yKwh',
+            borderColor:'#6b7280', backgroundColor:'rgba(107,114,128,.15)', borderWidth:3, pointRadius:0, tension:.15 },
+          { type:'bar', label:'Kostnad Spot m/støtte', data:costS, yAxisID:'yKr',
+            backgroundColor:'rgba(37, 99, 235, .35)', borderColor:'#2563eb', borderWidth:1 },
+          { type:'bar', label:'Kostnad Norgespris', data:costN, yAxisID:'yKr',
+            backgroundColor:'rgba(22, 163, 74, .35)', borderColor:'#16a34a', borderWidth:1 },
+        ]
+      },
+      options: {
+        responsive:true, maintainAspectRatio:false,
+        interaction:{ mode:'index', intersect:false },
+        plugins:{ legend:{ display:true, position:'top' } },
+        scales:{
+          yKwh:{ position:'left', title:{display:true, text:'kWh'}, suggestedMax:ymaxKwh, beginAtZero:true, grid:{ drawOnChartArea:false }},
+          yKr:{ position:'right', title:{display:true, text:'Kr (inkl. mva)'}, suggestedMax:ymaxCost, beginAtZero:true }
+        }
+      }
+    });
+  }
+
+  function renderPriceChart(labels, priceS, priceN, priceNo, area){
+    const ctx = document.getElementById('priceChart').getContext('2d');
+    if(priceChart) priceChart.destroy();
+    const ymax = Math.max(q(priceS,0.95), q(priceN,0.95), q(priceNo,0.95)) * 1.15;
+    priceChart = new Chart(ctx, {
+      type:'line',
+      data:{ labels, datasets:[
+        { label:`${area} spot u/støtte (inkl. mva)`, data:priceNo, borderColor:'#9ca3af', backgroundColor:'rgba(156,163,175,.15)', tension:.15, pointRadius:0, borderWidth:2 },
+        { label:`${area} spot m/støtte (inkl. mva)`, data:priceS,  borderColor:'#2563eb', backgroundColor:'rgba(37,99,235,.15)',  tension:.15, pointRadius:0, borderWidth:2 },
+        { label:'Norgespris (effektiv, inkl. mva)', data:priceN,    borderColor:'#16a34a', backgroundColor:'rgba(22,163,74,.15)',  tension:.15, pointRadius:0, borderWidth:2 }
+      ]},
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{ display:true, position:'top' } ,
+                  title:{ display:true, text:`Historiske energipriser ${area}` } },
+        scales:{ y:{ title:{display:true,text:'kr/kWh (inkl. mva)'}, suggestedMax:ymax, beginAtZero:true } }
+      }
+    });
+  }
+
+  // ---- Recalc ----
+  const deb = (fn, ms=300) => { let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; };
+
+  function getMonthlyArray(){
+    if (manualMode) {
+      return manualValues.map(v => v==null ? 0 : v);
+    } else {
+      const annual = Number(annualEl.value||0);
+      const shape  = Number(shapeEl.value||0)/100;
+      return annualToMonthly(annual, shape, useMode);
+    }
+  }
+
+  function recalc(){
+    if(!dataset) return;
+    updateAreaHeaders();
+    updateHistTitle();
+
+    const area = areaEl.value;
+    const monthlyKWh = getMonthlyArray();
+    if (manualMode) updateManualSum();
+
+    // Beregn for valgt periode
+    const { labels, kwhArr, priceS, priceNo, priceN, costS, costN, table, sums } =
+      compute(area, period, dataset.byAreaYear, monthlyKWh, useMode);
+
+    renderMixedChart(labels, kwhArr, costS, costN);
+    renderTable(table, sums);
+
+    statusEl.textContent = `Viser ${labels.length} måneder for ${area}.`;
+
+    // Hele serie for prisgraf (bruk samme kWh pr kalendermåned for effektiv Norgespris)
+    const allList = (()=>{ const ent = dataset.byAreaYear[area]||{}; const ys = Object.keys(ent).map(Number).sort((a,b)=>a-b);
+      const out=[]; for(const y of ys){ for(let m=1;m<=12;m++){ const r=ent[y]?.[m]; if(r) out.push({y,m,row:r}); } } return out; })();
+    const pLabels = allList.map(o=>`${o.y}-${String(o.m).padStart(2,'0')}`);
+    const pS = allList.map(o=>o.row.eff_ex*(1+VAT));
+    const cap = useMode === 'fritid' ? CAP_FRITID : CAP_BOLIG;
+    const pN = allList.map(o=>{
+      const k = monthlyKWh[o.m-1]||0;
+      const covered = Math.min(k, cap), excess = Math.max(0, k - cap);
+      const spotExEx = Number.isFinite(o.row.spot_ex) ? o.row.spot_ex : o.row.eff_ex;
+      return (k>0) ? ((covered*(NORGESPRIS_EX_ORE/100)+excess*spotExEx)*(1+VAT)/k) : fixedIncl();
+    });
+    const pNo = allList.map(o => (Number.isFinite(o.row.spot_ex)?o.row.spot_ex:o.row.eff_ex)*(1+VAT));
+
+    renderPriceChart(pLabels, pS, pN, pNo, area);
+  }
+
+  // ---- Init ----
+  (async function(){
+    try{
+      dataset = await loadMonthlyAvgs();
+
+      // Områder / periode
+      setAreas(dataset.areas);
+      setPeriodChips(dataset.years);
+
+      // Chips
+      setInsulChips();
+      setUseChips();
+
+      // Manuelle inputs
+      buildManualInputs();
+
+      // Lyttere
+      areaEl.addEventListener('change', recalc);
+      shapeEl.addEventListener('input', deb(()=>{ if(!manualMode){ shapeOut.textContent = `${shapeEl.value}%`; highlightInsul(Number(shapeEl.value)); recalc(); } }, 80));
+      annualEl.addEventListener('input', deb(()=>{ if(!manualMode) recalc(); }, 200));
+
+      manualToggle.addEventListener('click', ()=>{
+        manualMode = !manualMode;
+        setDisabledForManual(manualMode);
+        manualCard.style.display = manualMode && manualVisible ? 'block' : (manualMode ? 'none' : 'none');
+        if (manualMode) {
+          buildManualInputs();
+          updateManualSum();
+        }
+        recalc();
+      });
+
+      manualShowHide.addEventListener('click', ()=>{
+        if (!manualMode) return;
+        manualVisible = !manualVisible;
+        manualCard.style.display = manualVisible ? 'block' : 'none';
+      });
+
+      btnFillProfile.addEventListener('click', ()=>{
+        const annual = Number(annualEl.value||0);
+        const shape  = Number(shapeEl.value||0)/100;
+        const arr = annualToMonthly(annual, shape, useMode).map(x=>Math.round(x));
+        manualValues = arr.slice();
+        updateManualInputsFromArray(manualValues);
+        updateManualSum();
+        recalc();
+      });
+
+      btnClearAll.addEventListener('click', ()=>{
+        manualValues = Array(12).fill(null);
+        updateManualInputsFromArray(manualValues);
+        updateManualSum();
+        recalc();
+      });
+
+      // Start
+      recalc();
+    }catch(e){
+      console.error(e);
+      statusEl.textContent = 'Feil ved lasting av data. Sjekk at data/monthly_avgs_v1.csv er tilgjengelig.';
+    }
+  })();
+</script>
+</body>
+</html>
