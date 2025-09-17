@@ -162,7 +162,8 @@
     <div>
       <label>Energibærer</label>
       <div id="energyChips" class="chips"></div>
-      <small class="muted">Strøm (støtte timeskorrigert fra CSV) eller Fjernvarme/Nærvarme (støtte beregnet månedlig fra spot-snitt).</small>
+      <small class="muted">Strøm: Strømstøtte regnes time for time, selv om snittet for måneden er under terskelverdi for støtte.</small>
+      <small class="muted">Fjernvarme/Nærvarme: Strømstøtte regnes ut ifra månedssnitt for spotpris. Kun støtte dersom månedssnitt er over terskelverdi for støtte.</small>
     </div>
 
     <div>
