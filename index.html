@@ -125,19 +125,18 @@
     <div>
       <label for="area">Prisområde</label>
       <select id="area"></select>
-      <small class="muted">NO1 er standard hvis tilgjengelig. NO6 er utelatt.</small>
     </div>
 
     <div id="annualBox">
       <label for="annual">Årlig forbruk (kWt)</label>
       <input id="annual" type="number" value="20000" min="0" step="100">
-      <small class="muted">Legg inn årlig energiforbruk. Fordeles på måneder ut i fra isoleringsgrad.</small>
+      <small class="muted">Legg inn årlig energiforbruk, eller fyll ut hver måned manuelt</small>
     </div>
 
     <div id="useBox">
       <label>Boligtype</label>
       <div id="useChips" class="chips"></div>
-      <small class="muted">Bolig: Forbrukstak 5000 kWt/mnd. Fritidsbolig: Forbrukstak 1000 kWt/mnd.</small>
+      <small class="muted">Bolig: Forbrukstak 5000 kWt/mnd. <br>Fritidsbolig: Forbrukstak 1000 kWt/mnd.</small>
       <div id="seasonWrap" style="margin-top:8px; display:none">
         <label style="margin:0 0 6px">Bruk av fritidsbolig</label>
         <div class="chips">
@@ -151,12 +150,13 @@
     <div id="insulBox">
       <label>Isoleringsgrad</label>
       <div id="insulChips" class="chips"></div>
+      <small class="muted">Årlig energiforbruk fordeles på måneder ut i fra isoleringsgrad.</small>
     </div>
 
     <div>
-      <label>Velg periode energipriser i beregning</label>
+      <label>Velg periode for energipriser i beregning</label>
       <div id="periodChips" class="chips"></div>
-      <small class="muted">“Siste 12 mnd” eller et bestemt år. 2026 = prognoser.</small>
+      <small class="muted">2020-2025 (tom. august) er hentet fra Nordpool. Noe avvik kan forekomme pga. valutaomregning. <br>2025 (fom. september) og 2026 er prognoser fra  <a href="https://bedrift.fortum.no/prognose-strompriser" target="_blank" rel="noopener">bedrift.fortum.no/prognose-strompriser </a>  </small>
     </div>
 
     <div>
